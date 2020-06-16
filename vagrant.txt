@@ -1,0 +1,33 @@
+
+下载镜像
+http://www.vagrantbox.es/
+
+	# 官方镜像：在线安装
+	vagrant init centos/7
+
+	# 下载镜像：自定义镜像名、指定镜像路径(推荐)
+	# 官方：https://vagrantcloud.com/centos/boxes/7/versions/1902.01/providers/virtualbox.box
+	# vagrant box add <boxName> <boxFilePath>
+	vagrant box add centos7 ~/Downloads/centos-7.0-x86_64.box
+
+
+找一个空的文件夹，打开命令行工具，需要使用到下面的命令
+ $ vagrant box add {title} {url}
+ $ vagrant init {title}
+ $ vagrant up
+
+
+
+vagrant box list	查看目前已有的box
+vagrant box add [自定义名称] [box镜像路径]	新增加一个box
+vagrant box remove	删除指定box
+vagrant init	初始化配置vagrantfile
+vagrant up	启动虚拟机
+vagrant ssh	ssh登陆虚拟机
+vagrant suspend	挂起虚拟机
+vagrant reload	重启虚拟机
+vagrant halt	关闭虚拟机
+vagrant status	查看虚拟机状态
+vagrant destroy	删除虚拟机
+vagrant package --output xxx.box	打包分发
+vagrant package ---output xxx.box --base "自己的box"	

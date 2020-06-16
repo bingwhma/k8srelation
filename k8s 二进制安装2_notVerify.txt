@@ -1,0 +1,454 @@
+centos7部署k8s集群二进制安装
+
+
+##centos7部署k8s
+###环境准备    centos7-x86_64
+cat /etc/hosts
+10.0.0.67 k8s-master01
+10.0.0.68 k8s-node01
+10.0.0.62 k8s-node02
+
+swapoff -a
+systemctl stop firewalld && systemctl disable firewalld
+###master
+yum -y install etcd
+systemctl start etcd.service
+
+cd /opt/k8s/kubernetes/server/
+tar xf kubernetes-server-linux-amd64.tar.gz
+cd kubernetes/server/bin/
+cp kubectl  kube-scheduler kube-controller-manager kube-apiserver /usr/bin/
+
+ # apiserver
+mkdir /etc/kubernetes /var/log/kubernetes -p
+cat /usr/lib/systemd/system/kube-apiserver.service 
+    [Unit]
+    Description=Kubernetes API Server
+    Documentation=https://github.com/kubernetes
+    [Service]
+    EnvironmentFile=/etc/kubernetes/apiserver
+    ExecStart=/usr/bin/kube-apiserver $KUBE_API_ARGS
+    Restart=on-failure
+    Type=notify
+    LimitNOFILE=65535
+    [Install]
+    WantedBy=multi-user.target
+
+cat /etc/kubernetes/apiserver 
+    KUBE_API_ARGS="--etcd_servers=http://127.0.0.1:2379 --insecure-bind-address=0.0.0.0 --insecure-port=8080 --service-cluster-ip-range=169.169.0.0/16 --service-node-port-range=1-65535 --admission_control=NamespaceLifecycle,LimitRanger,SecurityContextDeny,ServiceAccount,ResourceQuota --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+
+ #controller-manager
+cat /usr/lib/systemd/system/kube-controller-manager.service 
+    [Unit]
+    Description=Kubernetes Controller Manager
+    Documentation=https://github.com/kubernetes
+    After=kube-apiserver.service
+    Requires=kube-apiserver.service
+    [Service]
+    EnvironmentFile=/etc/kubernetes/controller-manager
+    ExecStart=/usr/bin/kube-controller-manager $KUBE_CONTROLLER_MANAGER_ARGS
+    Restart=on-failure
+    LimitNOFILE=65535
+    [Install]
+    WantedBy=multi-user.target
+
+cat /etc/kubernetes/controller-manager 
+    KUBE_CONTROLLER_MANAGER_ARGS="--master=10.0.0.67:8080 --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+
+  #scheduler
+cat /usr/lib/systemd/system/kube-scheduler.service 
+    [Unit]
+    Description=Kubernetes Controller Manager
+    Documentation=https://github.com/kubernetes
+    After=kube-apiserver.service
+    Requires=kube-apiserver.service
+    [Service]
+    EnvironmentFile=/etc/kubernetes/scheduler
+    ExecStart=/usr/bin/kube-scheduler $KUBE_SCHEDULER_ARGS
+    Restart=on-failure
+    LimitNOFILE=65535
+    [Install]
+    WantedBy=multi-user.target
+
+cat /etc/kubernetes/scheduler 
+    KUBE_SCHEDULER_ARGS="--master=http://10.0.0.67:8080 --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+
+#启动服务
+systemctl start kube-apiserver.service
+systemctl start kube-controller-manager.service
+systemctl start kube-scheduler.service
+
+systemctl enable kube-apiserver.service
+systemctl enable kube-controller-manager.service
+systemctl enable kube-scheduler.service
+
+
+###node01和node02
+cd /opt/k8s/kubernetes/server/
+tar xf kubernetes-server-linux-amd64.tar.gz
+cd kubernetes/server/bin/
+cp kubelet  kube-proxy /usr/bin/
+mkdir /etc/kubernetes /var/log/kubernetes -p
+
+ #kubelet
+cat /usr/lib/systemd/system/kubelet.service 
+    [Unit]
+    Description=Kubernetes Kubelet Server
+    Documentation=https://github.com/kubernetes
+    After=docker.service
+    Requires=docker.service
+
+    [Service]
+    WorkingDirectory=/var/lib/kubelet
+    EnvironmentFile=/etc/kubernetes/kubelet
+    ExecStart=/usr/bin/kubelet $KUBELET_ARGS
+    Restart=on-failure
+
+    [Install]
+    WantedBy=multi-user.target
+cat /etc/kubernetes/kubelet 
+    KUBELET_ARGS="--api-servers=http://10.0.0.67:8080 --hostname-override=10.0.0.68 --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+
+ #kube-proxy
+cat /usr/lib/systemd/system/kube-proxy.service 
+    [Unit]
+    Description=Kubernetes Kube-proxy Server
+    Documentation=https://github.com/kubernetes
+    After=network.target
+    Requires=network.service
+
+    [Service]
+    EnvironmentFile=/etc/kubernetes/kube-proxy
+    ExecStart=/usr/bin/kube-proxy $KUBE_PROXY_ARGS
+    Restart=on-failure
+    LimitNOFILE=65535
+
+    [Install]
+    WantedBy=multi-user.target
+cat /etc/kubernetes/kube-proxy 
+    KUBE_PROXY_ARGS="--master=http://10.0.0.67:8080 --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+
+systemctl start kubelet.service
+systemctl start kube-proxy.service
+systemctl enable kubelet.service
+systemctl enable kube-proxy.service
+
+###https
+cd /opt/k8s/ca
+openssl genrsa -out ca.key 2048
+openssl req -x509 -new -nodes -key ca.key -subj "/CN=k8x-master01" -days 5000 -out ca.crt
+cat master_ssl.cnf 
+    [req]
+    req_extensions = v3_req
+    distinguished_name = req_distinguished_name
+    [req_distinguished_name]
+    [ v3_req ]
+    basicConstraints = CA:FALSE
+    keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+    subjectAltName = @alt_names
+    [alt_names]
+    DNS.1 = kubernetes
+    DNS.2 = kubernetes.default
+    DNS.3 = kubernetes.default.svc
+    DNS.4 = kubernetes.defaults.svc.cluster.local
+    DNS.5 = k8s-master01
+    IP.1 = 169.169.0.1
+    IP.2 = 10.0.0.67
+ #apiserver    
+
+openssl genrsa -out server.key 2048
+openssl req -new -key server.key -subj "/CN=k8s-master01" -config master_ssl.cnf -out server.csr
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 5000 -extensions v3_req -extfile master_ssl.cnf -out server.crt
+mkdir /var/run/kubernetes/apiserver
+cp ca.crt server.key server.crt /var/run/kubernetes/apiserver
+cat /etc/kubernetes/apiserver
+    KUBE_API_ARGS="--etcd_servers=http://127.0.0.1:2379 --insecure-bind-address=0.0.0.0 --insecure-port=0 --secure-port=443 --client_ca_file=/var/run/kubernetes/apiserver/ca.crt --tls-private-key-file=/var/run/kubernetes/apiserver/server.key --tls-cert-file=/var/run/kubernetes/apiserver/server.crt --service-cluster-ip-range=169.169.0.0/16 --service-node-port-range=1-65535 --admission_control=NamespaceLifecycle,LimitRanger,SecurityContextDeny,ServiceAccount,ResourceQuota --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+systemctl restart kube-apiserver.service
+
+ #controller-manager
+openssl genrsa -out cs_client.key 2048
+openssl req -new -key cs_client.key -subj "/CN=k8s-node01" -out cs_client.csr
+openssl x509 -req -in cs_client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out cs_client.crt -days 5000
+mkdir /var/run/kubernetes/controller
+cp ca.crt ca.key cs_client.* /var/run/kubernetes/controller
+cat /etc/kubernetes/kubeconfig 
+    apiVersion: v1
+    kind: Config
+    users:
+    - name: controllermanager
+      user:
+        client-certificate: /var/run/kubernetes/controller/cs_client.crt
+        client-key: /var/run/kubernetes/controller/cs_client.key
+    clusters:
+    - name: local
+      cluster:
+        certificate-authority: /var/run/kubernetes/apiserver/ca.crt
+    contexts:
+    - context:
+        cluster: local
+        user: controllermanager
+      name: my-context
+    current-context: my-context
+
+
+cat /etc/kubernetes/controller-manager
+    KUBE_CONTROLLER_MANAGER_ARGS="--master=https://10.0.0.67:443 --service_account_private_key_file=/var/run/kubernetes/apiserver/server.key --root-ca-file=/var/run/kubernetes/apiserver/ca.crt --kubeconfig=/etc/kubernetes/kubeconfig --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+systemctl restart kube-controller-manager.service
+
+ #scheduler
+cat /etc/kubernetes/scheduler
+    KUBE_SCHEDULER_ARGS="--master=https://10.0.0.67:443 --kubeconfig=/etc/kubernetes/kubeconfig --logtostderr=false --log-dir=/var/log/kubernetes --v=2"    
+systemctl restart kube-controller-manager.service
+
+###k8s-node01
+mkdir /opt/k8s/ca
+cd /opt/k8s/ca
+
+openssl genrsa -out kubelet_client.key 2048
+openssl req -new -key kubelet_client.key -subj "/CN=10.0.0.68" -out kubelet_client.csr
+openssl x509 -req -in kubelet_client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out kubelet_client.crt -days 5000
+
+mkdir /var/run/kubernetes/node
+cat /etc/kubernetes/kubeconfig
+    apiVersion: v1
+    kind: Config
+    users:
+    - name: kubelet
+      user:
+        client-certificate: /var/run/kubernetes/node/kubelet_client.crt
+        client-key: /var/run/kubernetes/node/kubelet_client.key
+    clusters:
+    - name: local
+      cluster:
+        certificate-authority: /var/run/kubernetes/node/ca.crt
+    contexts:
+    - context:
+        cluster: local
+        user: kubelet
+      name: my-context
+    current-context: my-context
+
+cp kubelet_client.crt kubelet_client.key ca.crt /var/run/kubernetes/node
+
+cat /etc/kubernetes/kubelet
+    KUBELET_ARGS="--api-servers=https://10.0.0.67:443 --kubeconfig=/etc/kubernetes/kubeconfig --hostname-override=10.0.0.68 --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+systemctl restart kubelet
+systemctl  status kubelet
+
+ #kube-proxy
+cat /etc/kubernetes/kube-proxy 
+    KUBE_PROXY_ARGS="--master=https://10.0.0.67:443 --kubeconfig=/etc/kubernetes/kubeconfig --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+systemctl restart kube-proxy
+systemctl status kube-proxy
+
+###node02
+ #在node01上把配置文件复制到其他节点并重启其他节点的服务
+scp -r /var/run/kubernetes/node 10.0.0.62:/var/run/kubernetes
+scp /etc/kubernetes/* 10.0.0.62:/etc/kubernetes
+ #需要调整kubelet里面自己的ip地址，然后重启各服务
+cat /etc/kubernetes/kubelet 
+    KUBELET_ARGS="--api-servers=https://10.0.0.67:443 --kubeconfig=/etc/kubernetes/kubeconfig --hostname-override=10.0.0.69 --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+
+systemctl restart kubelet
+systemctl status kubelet
+
+systemctl restart kube-proxy
+systemctl status kube-proxy
+
+###master kubectl 操作
+kubectl --server=https://10.0.0.67:443 --certificate-authority=/var/run/kubernetes/apiserver/ca.crt --client-certificate=/var/run/kubernetes/controller/cs_client.crt --client-key=/var/run/kubernetes/controller/cs_client.key get nodes
+ #设置别名
+alias kubectls='kubectl --server=https://10.0.0.67:443 --certificate-authority=/var/run/kubernetes/apiserver/ca.crt --client-certificate=/var/run/kubernetes/controller/cs_client.crt --client-key=/var/run/kubernetes/controller/cs_client.key'
+kubectls get nodes
+    NAME        STATUS    AGE
+    10.0.0.68   Ready     23h
+    10.0.0.69   Ready     20h
+echo "alias kubectls='kubectl --server=https://10.0.0.67:443 --certificate-authority=/var/run/kubernetes/apiserver/ca.crt --client-certificate=/var/run/kubernetes/controller/cs_client.crt --client-key=/var/run/kubernetes/controller/cs_client.key'" >> ~/.bashrc
+. ~/.bashrc
+
+###fanneld网络,node01
+yum -y install etcd
+systemctl start etcd
+systemctl enable etcd
+systemctl status etcd
+cd /opt/k8s
+wget https://github.com/coreos/flannel/releases/download/v0.11.0/flannel-v0.11.0-linux-amd64.tar.gz
+tar flannel-v0.11.0-linux-amd64.tar.gz 
+tar xf flannel-v0.11.0-linux-amd64.tar.gz 
+
+cp flanneld mk-docker-opts.sh /usr/bin/
+scp flanneld mk-docker-opts.sh 10.0.0.62:/usr/bin
+scp flanneld mk-docker-opts.sh 10.0.0.67:/usr/bin
+
+cat /usr/lib/systemd/system/flanneld.service
+    [Unit]
+    Description=flanneld overlay address etcd agent
+    After=network.service
+    Before=docker.service
+
+    [Service]
+    Type=notify
+    EnvironmentFile=/etc/sysconfig/flanneld
+    ExecStart=/usr/bin/flanneld -etcd-endpoints=${FLANNEL_ETCD} $FLANNEL_OPTIONS
+
+    [Install]
+    RequireBy=docker.service
+    WantedBy=multi-user.target
+
+scp /usr/lib/systemd/system/flanneld.service 10.0.0.62:/usr/lib/systemd/system
+scp /usr/lib/systemd/system/flanneld.service 10.0.0.67:/usr/lib/systemd/system
+cat /etc/sysconfig/flanneld
+    FLANNEL_ETCD="http://10.0.0.67:2379"
+    FLANNEL_ETCD_KEY="/coreos.com/network"
+scp /etc/sysconfig/flanneld 10.0.0.62:/etc/sysconfig
+scp /etc/sysconfig/flanneld 10.0.0.67:/etc/sysconfig
+
+etcdctl set /coreos.com/network/config '{ "Network": "172.18.0.0/16" }'
+systemctl stop docker
+
+systemctl start flanneld
+systemctl status flanneld
+systemctl start docker
+ifconfig 
+mk-docker-opts.sh -i
+source /run/flannel/subnet.env 
+ifconfig docker0 ${FLANNEL_SUBNET}
+ifconfig 
+
+systemctl enable flanneld
+
+
+###创建应用
+ # 再kubelet节点上配置解决不能访问k8s.io的问题
+    cat /etc/kubernetes/kubelet 
+        KUBELET_ARGS="--api-servers=https://10.0.0.67:443 --pod_infra_container_image=10.0.0.66:80/panpass/pause-amd64:3.0 --kubeconfig=/etc/kubernetes/kubeconfig --hostname-override=10.0.0.68 --logtostderr=false --log-dir=/var/log/kubernetes --v=2"
+    systemctl restart kubelet.service
+
+    ###master
+cd /opt/k8s/test
+cat redis-master-controller.yaml 
+    apiVersion: v1
+    kind: ReplicationController
+    metadata:
+      name: redis-master
+      labels:
+        name: redis-master
+    spec:
+      replicas: 1
+      selector:
+        name: redis-master
+      template:
+        metadata:
+          labels:
+            name: redis-master
+        spec:
+          containers:
+          - name: master
+            image: kubeguide/redis-master
+            ports:
+            - containerPort: 6379
+cat redis-master-service.yaml 
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: redis-master
+      labels:
+        name: redis-master
+    spec:
+      ports:
+      - port: 6379
+        targetPort: 6379
+      selector:
+        name: redis-master
+kubectls create -f redis-master-controller.yaml
+kubectls get pods
+kubectls get rc
+
+kubectls create -f redis-master-service.yaml
+kubectls get service
+
+cat redis-slave-controller.yaml 
+    apiVersion: v1
+    kind: ReplicationController
+    metadata:
+      name: redis-slave
+      labels:
+        name: redis-slave
+    spec:
+      replicas: 2
+      selector:
+        name: redis-slave
+      template:
+        metadata:
+          labels:
+            name: redis-slave
+        spec:
+          containers:
+          - name: slave
+            image: kubeguide/guestbook-redis-slave
+            env:
+            - name: GET_HOSTS_FROM
+              value: env
+            ports:
+            - containerPort: 6379
+cat redis-slave-service.yaml 
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: redis-slave
+      labels:
+        name: redis-slave
+    spec:
+      ports:
+      - port: 6379
+      selector:
+        name: redis-slave
+
+kubectls create -f redis-slave-controller.yaml
+kubectls create -f redis-slave-service.yaml
+        
+cat frontend-controller.yaml 
+    apiVersion: v1
+    kind: ReplicationController
+    metadata:
+      name: frontend
+      labels:
+        name: frontend
+    spec:
+      replicas: 3
+      selector:
+        name: frontend
+      template:
+        metadata:
+          labels:
+            name: frontend
+        spec:
+          containers:
+          - name: frontend
+            image: kubeguide/guestbook-php-frontend
+            env:
+            - name: GET_HOSTS_FROM
+              value: env
+            ports:
+            - containerPort: 80
+cat frontend-service.yaml 
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: frontend
+      labels:
+        name: frontend
+    spec:
+      type: NodePort
+      ports:
+      - port: 80
+        nodePort: 30001
+      selector:
+        name: frontend
+        
+kubectls create -f frontend-controller.yaml
+kubectls create -f frontend-service.yaml
+
+kubectls get pod
+kubectls get rc
+kubectls get services

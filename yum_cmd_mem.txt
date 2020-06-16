@@ -1,0 +1,21 @@
+1.yum命令：
+
+yum      install       softwarename        安装
+yum      repolist                          列出设定yum源的信息
+yum      remove        softwarename        卸载
+yum      list          softwarename      查看软件源中是否有此软件
+yum      list all                         列出所有软件名称
+yum      list installd                    列出已经安装的软件名称
+yum      list available               列出可以用yum安装的软件名称
+yum      clean all                        清空yum缓存
+yum      search         softwarename    根据软件信息搜索软件名字
+yum      whatprovides   filename       在yum源中查找包含filename文件的软件包
+yum      update                           更新软件
+yum      history                          查看系统软件改变历史
+yum      reinstall       softwarename     重新安装
+yum      info            softwarename     查看软件信息
+yum      groups list                      查看软件组信息
+yum      groups info     softwaregroup    查看软件组内包含的软件
+yum      groups install  softwaregroup    安装组件
+
+eg：安装dhcp及卸载dhcp

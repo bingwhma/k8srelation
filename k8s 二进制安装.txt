@@ -1,0 +1,1029 @@
+二进制安装K8S集群V1.16.3    二进制安装K8S集群V1.16.3
+
+
+centos linux7.5
+
+cat > /etc/hosts << EOF
+192.168.199.221 master
+192.168.199.222 node1
+192.168.199.223 node2
+EOF
+1、关闭防火墙、关闭selinux、关闭swapoff -a
+systemctl stop firewalld
+selinux=disabled
+swapoff -a
+
+2、安装docker
+1)常用方法
+
+复制代码
+a、配置yum源
+阿里镜像源
+yum-config-manager --add-repo http://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+Docker官方镜像源
+yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+b、安装docker
+显示docker-ce所有可安装版本：
+yum list docker-ce --showduplicates | sort -r
+安装指定docker版本
+yum install docker-ce-18.06.1.ce-3.el7 -y
+设置镜像存储目录
+找到大点的挂载的目录进行存储
+# 修改docker配置
+vi /lib/systemd/system/docker.service
+
+找到这行，王后面加上存储目录，例如这里是 --graph /apps/docker （此处也可以另外建一个文件去指定，详细参考下面方法）
+ExecStart=/usr/bin/docker --graph /apps/docker
+启动docker并设置docker开机启动
+systemctl enable docker
+systemctl start docker
+复制代码
+ 
+
+2)本地rpm包安装
+
+复制代码
+a)下载地址
+https://download.docker.com/linux/centos/7/x86_64/stable/Packages/
+17版本请把docker-ce-selinux也一起下载
+b、创建挂在目录以及阿里源的文件
+mkdir -p /data/docker-root
+mkdir -p /etc/docker
+touch /etc/docker/daemon.json
+chmod 700 /etc/docker/daemon.json
+cat > /etc/docker/daemon.json << EOF
+{
+"graph":"/data/docker-root",
+"registry-mirrors": ["https://7bezldxe.mirror.aliyuncs.com"]
+}
+EOF
+c、安装docker
+yum localinstall ./docker* -y
+启动docker并设置docker开机启动
+systemctl enable docker
+systemctl start docker
+复制代码
+3)二进制安装
+
+复制代码
+a)下载地址
+二进制包下载地址：https://download.docker.com/linux/static/stable/x86_64/
+b)解压安装
+tar zxvf docker-18.09.6.tgz
+mv docker/* /usr/bin
+mkdir /etc/docker
+mkdir -p /data/docker-root
+mv daemon.json /etc/docker
+mv docker.service /usr/lib/systemd/system
+启动docker并设置docker开机启动
+systemctl start docker
+systemctl enable docker
+c)涉及到的daemon.json和docker.service的文件内容
+为了配置docker的目录和docker改为systemd以及阿里源
+cat > /etc/docker/daemon.json << EOF
+{
+"graph":"/data/docker-root",
+"registry-mirrors": ["https://7bezldxe.mirror.aliyuncs.com"]
+}
+EOF
+
+为了设置命令启动的
+cat > /usr/lib/systemd/system/docker.service << EOF
+[Unit]
+Description=Docker Application Container Engine
+Documentation=https://docs.docker.com
+After=network.target firewalld.service
+
+[Service]
+Type=notify
+# the default is not to use systemd for cgroups because the delegate issues still
+# exists and systemd currently does not support the cgroup feature set required
+# for containers run by docker
+ExecStart=/usr/bin/dockerd
+ExecReload=/bin/kill -s HUP $MAINPID
+# Having non-zero Limit*s causes performance problems due to accounting overhead
+# in the kernel. We recommend using cgroups to do container-local accounting.
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+# Uncomment TasksMax if your systemd version supports it.
+# Only systemd 226 and above support this version.
+#TasksMax=infinity
+TimeoutStartSec=0
+# set delegate yes so that systemd does not reset the cgroups of docker containers
+Delegate=yes
+# kill only the docker process, not all processes in the cgroup
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+EOF
+复制代码
+3、安装cfssl工具（任何一个主机）：
+证书 openssl 麻烦点 cfssl简单点
+
+复制代码
+mkdir -p /usr/local/ssl
+cd /usr/local/ssl
+wget https://pkg.cfssl.org/R1.2/cfssl_linux-amd64
+wget https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64
+wget https://pkg.cfssl.org/R1.2/cfssl-certinfo_linux-amd64
+mv cfssl_linux-amd64 /usr/local/bin/cfssl
+mv cfssljson_linux-amd64 /usr/local/bin/cfssljson
+mv cfssl-certinfo_linux-amd64 /usr/local/bin/cfssl-certinfo
+chmod +x /usr/local/bin/cfssl*
+复制代码
+4、生成etcd证书
+首先创建三个文件
+
+复制代码
+vi ca-config.json
+{
+"signing": {
+"default": {
+"expiry": "87600h"
+},
+"profiles": {
+"www": {
+"expiry": "87600h",
+"usages": [
+"signing",
+"key encipherment",
+"server auth",
+"client auth"
+]
+}
+}
+}
+}
+复制代码
+复制代码
+vi ca-csr.json
+{
+"CN": "etcd CA",
+"key": {
+"algo": "rsa",
+"size": 2048
+},
+"names": [
+{
+"C": "CN",
+"L": "Beijing",
+"ST": "Beijing"
+}
+]
+}
+复制代码
+复制代码
+vi etcd-csr.json
+{
+"CN": "etcd",
+"hosts": [
+"192.168.200.221",
+"192.168.200.222",
+"192.168.200.223"
+],
+"key": {
+"algo": "rsa",
+"size": 2048
+},
+"names": [
+{
+"C": "CN",
+"L": "BeiJing",
+"ST": "BeiJing"
+}
+]
+}
+复制代码
+执行命令
+
+cfssl gencert -initca ca-csr.json | cfssljson -bare ca -
+cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=www etcd-csr.json | cfssljson -bare etcd
+就会生成ca-key.pem ca.pem server-key.pem server.pem这几个文件
+
+5、部署etcd(三个节点)
+二进制包下载地址：https://github.com/coreos/etcd/releases/tag/v3.3.18
+
+复制代码
+wget https://github.com/etcd-io/etcd/releases/download/v3.3.18/etcd-v3.3.18-linux-amd64.tar.gz
+tar -zxvf etcd-v3.3.18-linux-amd64.tar.gz
+mkdir -p /opt/etcd/{bin,cfg,ssl}
+cp etcd etcdctl /opt/etcd/bin/
+cp /usr/local/ssl/etcd/*.pem /opt/etcd/ssl/
+chmod +x /opt/etcd/bin/*
+复制代码
+复制代码
+# vi /opt/etcd/cfg/etcd.conf
+#[Member]
+ETCD_NAME="etcd-1"
+ETCD_DATA_DIR="/var/lib/etcd/default.etcd"
+ETCD_LISTEN_PEER_URLS="https://192.168.200.221:2380"
+ETCD_LISTEN_CLIENT_URLS="https://192.168.200.221:2379"
+
+#[Clustering]
+ETCD_INITIAL_ADVERTISE_PEER_URLS="https://192.168.200.221:2380"
+ETCD_ADVERTISE_CLIENT_URLS="https://192.168.200.221:2379"
+ETCD_INITIAL_CLUSTER="etcd-1=https://192.168.200.221:2380,etcd-2=https://192.168.200.222:2380,etcd-3=https://192.168.200.223:2380"
+ETCD_INITIAL_CLUSTER_TOKEN="etcd-cluster"
+ETCD_INITIAL_CLUSTER_STATE="new"
+
+# 注意修改每个节点的对应IP和etcd_name
+复制代码
+# 启动文件
+
+ 
+
+复制代码
+vi /usr/lib/systemd/system/etcd.service
+[Unit]
+Description=Etcd Server
+After=network.target
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+EnvironmentFile=/opt/etcd/cfg/etcd.conf
+ExecStart=/opt/etcd/bin/etcd \
+--name=${ETCD_NAME} \
+--data-dir=${ETCD_DATA_DIR} \
+--listen-peer-urls=${ETCD_LISTEN_PEER_URLS} \
+--listen-client-urls=${ETCD_LISTEN_CLIENT_URLS},http://127.0.0.1:2379 \
+--advertise-client-urls=${ETCD_ADVERTISE_CLIENT_URLS} \
+--initial-advertise-peer-urls=${ETCD_INITIAL_ADVERTISE_PEER_URLS} \
+--initial-cluster=${ETCD_INITIAL_CLUSTER} \
+--initial-cluster-token=${ETCD_INITIAL_CLUSTER_TOKEN} \
+--initial-cluster-state=new \
+--cert-file=/opt/etcd/ssl/etcd.pem \
+--key-file=/opt/etcd/ssl/etcd-key.pem \
+--peer-cert-file=/opt/etcd/ssl/etcd.pem \
+--peer-key-file=/opt/etcd/ssl/etcd-key.pem \
+--trusted-ca-file=/opt/etcd/ssl/ca.pem \
+--peer-trusted-ca-file=/opt/etcd/ssl/ca.pem
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+复制代码
+cd /opt
+
+scp -r etcd root@192.168.200.222:/opt/
+scp -r etcd root@192.168.200.223:/opt/
+启动并查看集群状态
+
+ 
+
+复制代码
+systemctl daemon-reload
+systemctl start etcd
+systemctl enable etcd
+
+cd /opt/etcd/ssl
+/opt/etcd/bin/etcdctl --ca-file=ca.pem --cert-file=etcd.pem --key-file=etcd-key.pem --endpoints="https://192.168.200.221:2379,https://192.168.200.222:2379,https://192.168.200.223:2379" cluster-health
+复制代码
+最后会提示health
+
+6、生成apiserver证书
+首先建4个文件
+
+复制代码
+vi ca-config.json
+{
+"signing": {
+"default": {
+"expiry": "87600h"
+},
+"profiles": {
+"kubernetes": {
+"expiry": "87600h",
+"usages": [
+"signing",
+"key encipherment",
+"server auth",
+"client auth"
+]
+}
+}
+}
+}
+复制代码
+复制代码
+vi ca-csr.json
+{
+"CN": "kubernetes",
+"key": {
+"algo": "rsa",
+"size": 2048
+},
+"names": [
+{
+"C": "CN",
+"L": "Beijing",
+"ST": "Beijing",
+"O": "k8s",
+"OU": "System"
+}
+]
+}
+复制代码
+复制代码
+vi server-csr.json
+{
+"CN": "kubernetes",
+"hosts": [
+"10.0.0.1",
+"127.0.0.1",
+"kubernetes",
+"kubernetes.default",
+"kubernetes.default.svc",
+"kubernetes.default.svc.cluster",
+"kubernetes.default.svc.cluster.local",
+"192.168.200.221",
+"192.168.200.222",
+"192.168.200.223",
+"192.168.200.224",
+"192.168.200.225"
+],
+"key": {
+"algo": "rsa",
+"size": 2048
+},
+"names": [
+{
+"C": "CN",
+"L": "BeiJing",
+"ST": "BeiJing",
+"O": "k8s",
+"OU": "System"
+}
+]
+}
+复制代码
+复制代码
+vi kube-proxy-csr.json
+{
+"CN": "system:kube-proxy",
+"hosts": [],
+"key": {
+"algo": "rsa",
+"size": 2048
+},
+"names": [
+{
+"C": "CN",
+"L": "BeiJing",
+"ST": "BeiJing",
+"O": "k8s",
+"OU": "System"
+}
+]
+}
+复制代码
+执行命令
+
+cfssl gencert -initca ca-csr.json | cfssljson -bare ca -
+cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes server-csr.json | cfssljson -bare server
+cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes kube-proxy-csr.json | cfssljson -bare kube-proxy
+生成如下文件：ca-key.pem ca.pem kube-proxy-key.pem kube-proxy.pem server-key.pem server.pem
+
+7、部署apiserver，controller-manager和scheduler
+下载地址：https://github.com/kubernetes/kubernetes/
+
+wget https://dl.k8s.io/v1.16.3/kubernetes-server-linux-amd64.tar.gz
+# (我竟然下载不下来，我用原来的软件包)
+mkdir -p /opt/kubernetes/{bin,cfg,ssl,logs}
+# 三个启动脚本
+
+复制代码
+cat > /usr/lib/systemd/system/kube-apiserver.service << EOF
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+EnvironmentFile=/opt/kubernetes/cfg/kube-apiserver.conf
+ExecStart=/opt/kubernetes/bin/kube-apiserver $KUBE_APISERVER_OPTS
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+复制代码
+复制代码
+cat > /usr/lib/systemd/system/kube-controller-manager.service << EOF
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+EnvironmentFile=/opt/kubernetes/cfg/kube-controller-manager.conf
+ExecStart=/opt/kubernetes/bin/kube-controller-manager $KUBE_CONTROLLER_MANAGER_OPTS
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+复制代码
+复制代码
+cat > /usr/lib/systemd/system/kube-scheduler.service << EOF
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+EnvironmentFile=/opt/kubernetes/cfg/kube-scheduler.conf
+ExecStart=/opt/kubernetes/bin/kube-scheduler $KUBE_SCHEDULER_OPTS
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+复制代码
+cp kube-apiserver kube-controller-manager kube-scheduler kubectl /opt/kubernetes/bin/
+chmod +x /opt/kubernetes/bin/*
+cp *.pem /opt/kubernetes/ssl/
+配置文件
+
+复制代码
+cat > /opt/kubernetes/cfg/kube-apiserver.conf << EOF
+KUBE_APISERVER_OPTS="--logtostderr=false \
+--v=2 \
+--log-dir=/opt/kubernetes/logs \
+--etcd-servers=https://192.168.200.221:2379,https://192.168.200.222:2379,https://192.168.200.223:2379 \
+--bind-address=192.168.200.221 \
+--secure-port=6443 \
+--advertise-address=192.168.200.221 \
+--allow-privileged=true \
+--service-cluster-ip-range=10.0.0.0/24 \
+--enable-admission-plugins=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota,NodeRestriction \
+--authorization-mode=RBAC,Node \
+--enable-bootstrap-token-auth=true \
+--token-auth-file=/opt/kubernetes/cfg/token.csv \
+--service-node-port-range=30000-32767 \
+--kubelet-client-certificate=/opt/kubernetes/ssl/server.pem \
+--kubelet-client-key=/opt/kubernetes/ssl/server-key.pem \
+--tls-cert-file=/opt/kubernetes/ssl/server.pem \
+--tls-private-key-file=/opt/kubernetes/ssl/server-key.pem \
+--client-ca-file=/opt/kubernetes/ssl/ca.pem \
+--service-account-key-file=/opt/kubernetes/ssl/ca-key.pem \
+--etcd-cafile=/opt/etcd/ssl/ca.pem \
+--etcd-certfile=/opt/etcd/ssl/etcd.pem \
+--etcd-keyfile=/opt/etcd/ssl/etcd-key.pem \
+--audit-log-maxage=30 \
+--audit-log-maxbackup=3 \
+--audit-log-maxsize=100 \
+--audit-log-path=/opt/kubernetes/logs/k8s-audit.log"
+EOF
+复制代码
+复制代码
+cat > /opt/kubernetes/cfg/kube-controller-manager.conf << EOF
+KUBE_CONTROLLER_MANAGER_OPTS="--logtostderr=false \
+--v=2 \
+--log-dir=/opt/kubernetes/logs \
+--leader-elect=true \
+--master=127.0.0.1:8080 \
+--address=127.0.0.1 \
+--allocate-node-cidrs=true \
+--cluster-cidr=10.244.0.0/16 \
+--service-cluster-ip-range=10.0.0.0/24 \
+--cluster-signing-cert-file=/opt/kubernetes/ssl/ca.pem \
+--cluster-signing-key-file=/opt/kubernetes/ssl/ca-key.pem \
+--root-ca-file=/opt/kubernetes/ssl/ca.pem \
+--service-account-private-key-file=/opt/kubernetes/ssl/ca-key.pem \
+--experimental-cluster-signing-duration=87600h0m0s"
+EOF
+复制代码
+复制代码
+cat > /opt/kubernetes/cfg/kube-scheduler.conf << EOF
+KUBE_SCHEDULER_OPTS="--logtostderr=false \
+--v=2 \
+--log-dir=/opt/kubernetes/logs \
+--leader-elect \
+--master=127.0.0.1:8080 \
+--address=127.0.0.1"
+EOF
+复制代码
+启动
+
+复制代码
+systemctl start kube-apiserver
+systemctl start kube-controller-manager
+systemctl start kube-scheduler
+systemctl enable kube-apiserver
+systemctl enable kube-controller-manager
+systemctl enable kube-scheduler
+复制代码
+# 给kubelet-bootstrap授权：
+
+/opt/kubernetes/bin/kubectl create clusterrolebinding kubelet-bootstrap \
+--clusterrole=system:node-bootstrapper \
+--user=kubelet-bootstrap
+# token也可自行生成替换：
+
+head -c 16 /dev/urandom | od -An -t x | tr -d ' '
+注意 apiserver配置的token必须要与node节点bootstrap.kubeconfig配置里一致。
+
+8、部署node节点：kubelet kube-proxy
+启动脚本
+
+复制代码
+cat > /usr/lib/systemd/system/kubelet.service << EOF
+[Unit]
+Description=Kubernetes Kubelet
+After=docker.service
+Before=docker.service
+
+[Service]
+EnvironmentFile=/opt/kubernetes/cfg/kubelet.conf
+ExecStart=/opt/kubernetes/bin/kubelet $KUBELET_OPTS
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+复制代码
+复制代码
+cat > /usr/lib/systemd/system/kube-proxy.service << EOF
+
+[Unit]
+Description=Kubernetes Proxy
+After=network.target
+
+[Service]
+EnvironmentFile=/opt/kubernetes/cfg/kube-proxy.conf
+ExecStart=/opt/kubernetes/bin/kube-proxy $KUBE_PROXY_OPTS
+Restart=on-failure
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+复制代码
+配置文件
+
+复制代码
+cat > /opt/kubernetes/cfg/bootstrap.kubeconfig << EOF
+apiVersion: v1
+clusters:
+- cluster:
+certificate-authority: /opt/kubernetes/ssl/ca.pem
+server: https://192.168.200.221:6443
+name: kubernetes
+contexts:
+- context:
+cluster: kubernetes
+user: kubelet-bootstrap
+name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: kubelet-bootstrap
+user:
+token: c47ffb939f5ca36231d9e3121a252940
+EOF
+复制代码
+复制代码
+cat > /opt/kubernetes/cfg/kube-proxy.kubeconfig << EOF
+apiVersion: v1
+clusters:
+- cluster:
+certificate-authority: /opt/kubernetes/ssl/ca.pem
+server: https://192.168.200.221:6443
+name: kubernetes
+contexts:
+- context:
+cluster: kubernetes
+user: kube-proxy
+name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: kube-proxy
+user:
+client-certificate: /opt/kubernetes/ssl/kube-proxy.pem
+client-key: /opt/kubernetes/ssl/kube-proxy-key.pem
+EOF
+复制代码
+复制代码
+cat > /opt/kubernetes/cfg/kubelet.conf << EOF
+
+KUBELET_OPTS="--logtostderr=false \
+--v=2 \
+--log-dir=/opt/kubernetes/logs \
+--hostname-override=master \
+--network-plugin=cni \
+--kubeconfig=/opt/kubernetes/cfg/kubelet.kubeconfig \
+--bootstrap-kubeconfig=/opt/kubernetes/cfg/bootstrap.kubeconfig \
+--config=/opt/kubernetes/cfg/kubelet-config.yml \
+--cert-dir=/opt/kubernetes/ssl \
+--pod-infra-container-image=lizhenliang/pause-amd64:3.0"
+EOF
+复制代码
+复制代码
+cat > /opt/kubernetes/cfg/kubelet-config.yml << EOF
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+address: 0.0.0.0
+port: 10250
+readOnlyPort: 10255
+cgroupDriver: cgroupfs
+clusterDNS:
+- 10.0.0.2
+clusterDomain: cluster.local 
+failSwapOn: false
+authentication:
+anonymous:
+enabled: false
+webhook:
+cacheTTL: 2m0s
+enabled: true
+x509:
+clientCAFile: /opt/kubernetes/ssl/ca.pem 
+authorization:
+mode: Webhook
+webhook:
+cacheAuthorizedTTL: 5m0s
+cacheUnauthorizedTTL: 30s
+evictionHard:
+imagefs.available: 15%
+memory.available: 100Mi
+nodefs.available: 10%
+nodefs.inodesFree: 5%
+maxOpenFiles: 1000000
+maxPods: 110
+EOF
+复制代码
+复制代码
+cat > /opt/kubernetes/cfg/kube-proxy.conf << EOF
+KUBE_PROXY_OPTS="--logtostderr=false \
+--v=2 \
+--log-dir=/opt/kubernetes/logs \
+--config=/opt/kubernetes/cfg/kube-proxy-config.yml"
+EOF
+复制代码
+复制代码
+cat > /opt/kubernetes/cfg/kube-proxy-config.yml << EOF
+kind: KubeProxyConfiguration
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+address: 0.0.0.0
+metricsBindAddress: 0.0.0.0:10249
+clientConnection:
+kubeconfig: /opt/kubernetes/cfg/kube-proxy.kubeconfig
+hostnameOverride: master
+clusterCIDR: 10.0.0.0/24
+mode: ipvs
+ipvs:
+scheduler: "rr"
+iptables:
+masqueradeAll: true
+EOF
+复制代码
+复制代码
+scp ca.pem kube-proxy.pem kube-proxy-key.pem root@192.168.200.221:/opt/kubernetes/ssl/
+scp ca.pem kube-proxy.pem kube-proxy-key.pem root@192.168.200.222:/opt/kubernetes/ssl/
+scp ca.pem kube-proxy.pem kube-proxy-key.pem root@192.168.200.223:/opt/kubernetes/ssl/
+
+scp kubelet kube-proxy root@192.168.200.221:/opt/kubernetes/bin/
+scp kubelet kube-proxy root@192.168.200.222:/opt/kubernetes/bin/
+scp kubelet kube-proxy root@192.168.200.223:/opt/kubernetes/bin/
+复制代码
+启动
+
+systemctl start kubelet
+systemctl start kube-proxy
+systemctl enable kubelet
+systemctl enable kube-proxy
+允许给Node颁发证书
+
+kubectl get csr
+kubectl certificate approve node-csr-MYUxbmf_nmPQjmH3LkbZRL2uTO-_FCzDQUoUfTy7YjI
+kubectl get node
+9、 部署CNI网络
+二进制包下载地址：https://github.com/containernetworking/plugins/releases
+
+复制代码
+mkdir /opt/cni/bin /etc/cni/net.d -p
+cd /opt/cni/bin
+wget https://github.com/containernetworking/plugins/releases/download/v0.8.3/cni-plugins-linux-amd64-v0.8.3.tgz
+tar zxvf cni-plugins-linux-amd64-v0.8.2.tgz –C /opt/cni/bin
+scp * root@192.168.200.221:/opt/cni/bin
+scp * root@192.168.200.222:/opt/cni/bin
+scp * root@192.168.200.223:/opt/cni/bin
+复制代码
+确保kubelet启用CNI：
+
+cat /opt/kubernetes/cfg/kubelet.conf
+--network-plugin=cni
+
+
+在Master执行：
+在这个地址找到flannel如下命令https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/
+kubectl apply –f https://raw.githubusercontent.com/coreos/flannel/2140ac876ef134e0ed5af15c65e414cf26827915/Documentation/kube-flannel.yml
+此处我已经下载下来了，因为我要确保这个文件里的 "Network": "10.244.0.0/16"IP内容与下面配置文件一致
+cat /opt/kubernetes/cfg/kube-controller-manager.conf
+--cluster-cidr=10.244.0.0/16
+
+复制代码
+wget https://raw.githubusercontent.com/coreos/flannel/2140ac876ef134e0ed5af15c65e414cf26827915/Documentation/kube-flannel.yml
+kubectl apply –f kube-flannel.yml
+kubectl get pods -n kube-system
+NAME READY STATUS RESTARTS AGE
+kube-flannel-ds-amd64-8crzv 1/1 Running 0 5m37s
+kube-flannel-ds-amd64-8mp47 1/1 Running 0 5m37s
+kube-flannel-ds-amd64-ngkrr 1/1 Running 0 5m37s
+复制代码
+10、 授权apiserver访问kubelet
+为提供安全性，kubelet禁止匿名访问，必须授权才可以。
+
+# cat /opt/kubernetes/cfg/kubelet-config.yml
+……
+authentication:
+anonymous:
+enabled: false
+webhook:
+cacheTTL: 2m0s
+enabled: true
+x509:
+clientCAFile: /opt/kubernetes/ssl/ca.pem
+……
+下载地址https://github.com/kubernetes/kubernetes/tree/release-1.16/cluster/addons/rbac/kubelet-api-auth
+两个合并
+
+kubectl apply –f apiserver-to-kubelet-rbac.yaml
+提供一个apiserver-to-kubelet-rbac.yaml参考
+
+复制代码
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    rbac.authorization.kubernetes.io/autoupdate: "true"
+  labels:
+    kubernetes.io/bootstrapping: rbac-defaults
+  name: system:kube-apiserver-to-kubelet
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/proxy
+      - nodes/stats
+      - nodes/log
+      - nodes/spec
+      - nodes/metrics
+      - pods/log
+    verbs:
+      - "*"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system:kube-apiserver
+  namespace: ""
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:kube-apiserver-to-kubelet
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: kubernetes
+复制代码
+ 
+
+11. 部署Web UI和DNS
+https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard/
+
+wget https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0-beta4/aio/deploy/recommended.yaml
+kubectl apply -f recommended.yaml
+提供一个recommended.yaml参考
+
+ View Code
+ 
+
+网页登陆用token：创建service account并绑定默认cluster-admin管理员集群角色：
+
+复制代码
+# cat dashboard-adminuser.yaml 
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+name: admin-user
+namespace: kubernetes-dashboard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+name: admin-user
+roleRef:
+apiGroup: rbac.authorization.k8s.io
+kind: ClusterRole
+name: cluster-admin
+subjects:
+- kind: ServiceAccount
+name: admin-user
+namespace: kubernetes-dashboard
+复制代码
+ 
+
+获取token：
+
+kubectl -n kubernetes-dashboard describe secret $(kubectl -n kubernetes-dashboard get secret | grep admin-user | awk '{print $1}')
+访问地址：http://NodeIP:30001使用输出的token登录Dashboard。
+
+coredns下载地址https://github.com/kubernetes/kubernetes/blob/master/cluster/addons/dns/coredns/
+建议下载下来，然后修改里面的image地址，否则拉取不动
+
+kubectl apply –f coredns.yaml
+提供一个coredns参考
+
+复制代码
+# Warning: This is a file generated from the base underscore template file: coredns.yaml.base
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: coredns
+  namespace: kube-system
+  labels:
+      kubernetes.io/cluster-service: "true"
+      addonmanager.kubernetes.io/mode: Reconcile
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    kubernetes.io/bootstrapping: rbac-defaults
+    addonmanager.kubernetes.io/mode: Reconcile
+  name: system:coredns
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  - services
+  - pods
+  - namespaces
+  verbs:
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  annotations:
+    rbac.authorization.kubernetes.io/autoupdate: "true"
+  labels:
+    kubernetes.io/bootstrapping: rbac-defaults
+    addonmanager.kubernetes.io/mode: EnsureExists
+  name: system:coredns
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:coredns
+subjects:
+- kind: ServiceAccount
+  name: coredns
+  namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+  labels:
+      addonmanager.kubernetes.io/mode: EnsureExists
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+            pods insecure
+            upstream
+            fallthrough in-addr.arpa ip6.arpa
+        }
+        prometheus :9153
+        proxy . /etc/resolv.conf
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns
+  namespace: kube-system
+  labels:
+    k8s-app: kube-dns
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+    kubernetes.io/name: "CoreDNS"
+spec:
+  # replicas: not specified here:
+  # 1. In order to make Addon Manager do not reconcile this replicas parameter.
+  # 2. Default is 1.
+  # 3. Will be tuned in real time if DNS horizontal auto-scaling is turned on.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      k8s-app: kube-dns
+  template:
+    metadata:
+      labels:
+        k8s-app: kube-dns
+      annotations:
+        seccomp.security.alpha.kubernetes.io/pod: 'docker/default'
+    spec:
+      serviceAccountName: coredns
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        - key: "CriticalAddonsOnly"
+          operator: "Exists"
+      containers:
+      - name: coredns
+        image: lizhenliang/coredns:1.2.2
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            memory: 170Mi
+          requests:
+            cpu: 100m
+            memory: 70Mi
+        args: [ "-conf", "/etc/coredns/Corefile" ]
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/coredns
+          readOnly: true
+        ports:
+        - containerPort: 53
+          name: dns
+          protocol: UDP
+        - containerPort: 53
+          name: dns-tcp
+          protocol: TCP
+        - containerPort: 9153
+          name: metrics
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            add:
+            - NET_BIND_SERVICE
+            drop:
+            - all
+          readOnlyRootFilesystem: true
+      dnsPolicy: Default
+      volumes:
+        - name: config-volume
+          configMap:
+            name: coredns
+            items:
+            - key: Corefile
+              path: Corefile
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-dns
+  namespace: kube-system
+  annotations:
+    prometheus.io/port: "9153"
+    prometheus.io/scrape: "true"
+  labels:
+    k8s-app: kube-dns
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+    kubernetes.io/name: "CoreDNS"
+spec:
+  selector:
+    k8s-app: kube-dns
+  clusterIP: 10.0.0.2 
+  ports:
+  - name: dns
+    port: 53
+    protocol: UDP
+  - name: dns-tcp
+    port: 53
+    protocol: TCP
+复制代码
+ kubectl get pods -n kube-system

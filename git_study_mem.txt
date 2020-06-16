@@ -1,0 +1,82 @@
+
+git pull = git fetch + git merge
+
+回归
+git fetch
+git reset --hard HEAD
+
+
+git pull 出错的话
+
+git merge --abort
+git reset --hard HEAD
+
+
+git stash
+git pull
+git stash pop
+
+
+
+git reset --hard
+git pull
+
+
+Devops学习总结
+
+通过学习DevOps Fundamentals，
+了解了Devop的Core Values: CAMS
+为了Devop成功进行的10个实践
+以及Devops常见的一些工具
+
+
+5 Key DevOps Methodologies
+1.	People over Process over Tools
+2.	Continuous Delivery
+3.	Lean Management
+4.	Visible Ops style Change Control
+5.	Infrastructure as Code
+
+
+DevOps Building Block: Lean
+7 Principles of Lean Software Development
+• ELIMINATE WASTE
+• AMPLIFY LEARNING
+• DECIDE AS LATE AS POSSIBLE
+• DELIVER AS FAST AS POSSIBLE
+• EMPOWER THE TEAM
+• BUILD INTEGRITY IN
+• SEE THE WHOLE
+
+The Seven Wastes (Muda) of Lean Software
+Waste #1 - Partially Done Work
+Waste #2 - Extra Features
+Waste #3 - Relearning
+Waste #4 - Handoffs
+Waste #5 - Delays
+Waste #6 - Task Switching
+Waste #7 - Defects
+
+Build-Measure-Learn
+• BUILD – MINIMUM VIABLE PRODUCT
+• MEASURE – THE OUTCOME AND INTERNAL METRICS
+• LEARN – ABOUT YOUR PROBLEM AND YOUR SOLUTION
+• REPEAT – GO DEEPER WHERE IT’S NEEDED
+
+The Continuous Delivery Pipeline
+To successfully perform Continuous Delivery:
+1.	Only build artifacts once
+2.	Artifacts should be immutable
+3.	Deployment should go to a copy of production before going into production
+4.	Stop deploys if it a previous step fails
+5.	Deployments should be idempotent
+
+The Role Of QA
+Types of Testing:
+●	Unit Testing
+●	Code Hygiene
+●	Integration Testing
+●	TDD / BDD /ATDD
+●	Infrastructure Testing
+●	Performance Testing
+●	Security Testing
